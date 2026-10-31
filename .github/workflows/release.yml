@@ -7,6 +7,9 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # A tag push starts a release; this starts one again for a tag, as when
+  # it failed before publishing.
+  workflow_dispatch:
 
 permissions:
   contents: write # the draft release, and the uploads to it

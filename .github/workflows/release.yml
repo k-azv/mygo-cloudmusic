@@ -48,8 +48,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: macOS, os: macos-latest, platform: "darwin/arm64,darwin/amd64" }
-          - { name: Windows, os: ubuntu-latest, platform: "windows/amd64,windows/arm64" }
+          # The fork has neither an Apple signing identity nor notarization,
+          # so its releases carry Linux only: the .deb, the .tar.gz and the
+          # .rpm.
           - { name: Linux, os: ubuntu-latest, platform: "linux/amd64,linux/arm64" }
     steps:
       - uses: actions/checkout@v7
@@ -90,3 +91,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
         run: go tool mygo build -platform "${{ matrix.platform }}" -upload
+      # mygo build writes the app as an executable, a .deb and a .tar.gz;
+      # Fedora, RHEL and openSUSE users get the same app as an RPM, from the
+      # payload of the Debian package, which mygo does not write.
+      - name: Build the RPMs
+        if: matrix.name == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y rpm
+          for target in amd64:x86_64 arm64:aarch64; do
+            scripts/rpm.sh "build/linux-${target%%:*}"/*.deb "${target##*:}" "build/linux-${target%%:*}"
+          done
+      - name: Upload the RPMs
+        if: matrix.name == 'Linux'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" build/linux-*/*.rpm --repo "$GITHUB_REPOSITORY" --clobber

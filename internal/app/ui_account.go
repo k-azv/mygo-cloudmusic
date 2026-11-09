@@ -23,25 +23,71 @@ type loginState struct {
 	finished bool
 }
 
+// restoreLogin and accountProfile are what boot signs in with; tests
+// replace them.
+var (
+	restoreLogin   = netease.RestoreSession
+	accountProfile = netease.Account
+)
+
+// sessionWaits is how long boot waits before asking the keychain again: a
+// cold start launches the app as the session begins, while gnome-keyring
+// still loads its keyrings, and the first read then finds no session,
+// though the keychain has one.
+var sessionWaits = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
+
 // boot signs in with the session in the keychain, if any, then loads the
 // home page for whoever is listening.
 func (a *app) boot() {
 	a.homeLoading = true
 	go func() {
-		var prof *netease.Profile
-		if netease.RestoreSession() {
-			p, err := netease.Account()
-			switch {
-			case err == nil && p == nil:
-				netease.ClearSession() // expired
-			case err == nil:
-				prof = p
-			}
-		}
+		prof, ok := sessionProfile()
 		a.post(func() {
 			a.signedIn(prof)
 		})
+		if ok {
+			return
+		}
+		// The keychain may have it yet, and be slow to say so, as at a
+		// cold start: try again rather than stay signed out.
+		if prof, ok := waitForSession(); ok {
+			a.post(func() {
+				// Signed in by hand meanwhile: leave it.
+				if a.profile == nil {
+					a.signedIn(prof)
+				}
+			})
+		}
 	}()
+}
+
+// sessionProfile signs in with the session in the keychain, and returns
+// the profile of who is listening, if it has one.
+func sessionProfile() (*netease.Profile, bool) {
+	if !restoreLogin() {
+		return nil, false
+	}
+	p, err := accountProfile()
+	switch {
+	case err == nil && p == nil:
+		netease.ClearSession() // expired
+		return nil, false
+	case err == nil:
+		return p, true
+	}
+	return nil, false
+}
+
+// waitForSession asks the keychain again while it comes up, and returns
+// the profile once it has the session.
+func waitForSession() (*netease.Profile, bool) {
+	for _, wait := range sessionWaits {
+		time.Sleep(wait)
+		if prof, ok := sessionProfile(); ok {
+			return prof, ok
+		}
+	}
+	return nil, false
 }
 
 // signedIn shows what is personal to prof, or to nobody.
